@@ -1,0 +1,95 @@
+import nbformat as nb
+import gradio as gr
+from transformers import AutoTokenizer, AutoModelForCausalLM, set_seed, pipeline
+from gradio.components import Code, Slider
+
+title = "Code Explainer"
+description = "This is a space to convert Python code into English text explaining what it does using [codeparrot-small-code-to-text](https://huggingface.co/codeparrot/codeparrot-small-code-to-text),\
+            a code generation model for Python fine-tuned on [github-jupyter-code-to-text](https://huggingface.co/datasets/codeparrot/github-jupyter-code-to-text), a dataset of Python code followed by a docstring explaining it. The data was originally extracted from Jupyter notebooks."
+
+
+def extract_code_blocks(py_content):
+    # Split the content based on lines
+    lines = py_content.split("\n")
+    code_blocks = []
+    current_block = ""
+    in_function = False
+
+    for line in lines:
+        # Identify function section
+        if line.strip().startswith("def "):
+            if current_block.strip() != "":
+                code_blocks.append(current_block.strip())
+            current_block = line + "\n"
+            in_function = True
+        elif in_function:
+            current_block += line + "\n"
+
+        # If double line break found, start a new block
+        if line.strip() == "" and current_block.strip() != "":
+            if in_function:
+                code_blocks.append(current_block.strip())
+            current_block = ""
+            in_function = False
+
+    # Append the last block if there is any
+    if current_block.strip() != "":
+        code_blocks.append(current_block.strip())
+
+    return code_blocks
+
+
+def print_code_blocks(py_file_path):
+    with open(py_file_path, "r") as f:
+        py_content = f.read()
+
+    code_blocks = extract_code_blocks(py_content)
+    for i, code_block in enumerate(code_blocks, 1):
+        EXAMPLE_1 = code_block
+        example = [
+            [EXAMPLE_1, 0.6, 60, 80],
+        ]
+
+        # Change model to the finetuned one
+        tokenizer = AutoTokenizer.from_pretrained("codeparrot/codeparrot-small-code-to-text")
+        model = AutoModelForCausalLM.from_pretrained("codeparrot/codeparrot-small-code-to-text")
+
+        def make_doctring(gen_prompt):
+            return gen_prompt + f"\n\n\"\"\"\nExplanation:"
+
+        def code_generation(gen_prompt, temperature=0.6, seed=42):
+            set_seed(seed)
+            pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
+            prompt = make_doctring(gen_prompt)
+            generated_text = pipe(prompt, do_sample=True, top_p=0.95, temperature=temperature, max_length=60)[0][
+                'generated_text']
+            return generated_text
+
+        iface = gr.Interface(
+            fn=code_generation,
+            inputs=[
+                Code(lines=10, label="Python code", type="python"),  # Set type to "python"
+                Slider(
+                    minimum=0.2,
+                    maximum=0.8,
+                    step=0.1,
+                    label="Temperature",
+                ),
+                Slider(
+                    minimum=50,
+                    maximum=200,
+                    step=1,
+                    label="Random seed to use for the generation"
+                )
+            ],
+            outputs=Code(label="Predicted explanation", lines=10, type="python"),  # Set type to "python"
+            examples=example,
+            description=description,
+            title=title
+        )
+        iface.launch()
+
+
+# Example usage
+py_file_path = "Downloads/Image_Segmentation_using_kmeans (1).py"
+print_code_blocks(py_file_path)
